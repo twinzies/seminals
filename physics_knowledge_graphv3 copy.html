@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Physics Knowledge Graph</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #04060f;
+    --panel: #090d1a;
+    --border: #1a2040;
+    --text: #c8d4f0;
+    --muted: #4a5580;
+    --accent: #00ffe5;
+
+    --classical:    #f9a825;
+    --quantum:      #00ffe5;
+    --em:           #e040fb;
+    --thermo:       #ff5722;
+    --relativity:   #69f0ae;
+    --math:         #90caf9;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Outfit', sans-serif;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    flex-shrink: 0;
+    z-index: 10;
+  }
+
+  header h1 {
+    font-family: 'Space Mono', monospace;
+    font-size: 1rem;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+
+  header p {
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-family: 'Space Mono', monospace;
+  }
+
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.7rem;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 3px 8px;
+    border-radius: 20px;
+    border: 1px solid transparent;
+    transition: all 0.2s;
+    user-select: none;
+  }
+  .legend-item:hover { border-color: var(--border); color: var(--text); }
+  .legend-item.active { border-color: currentColor; }
+
+  .legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  #graph-container {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
+  svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .link {
+    stroke: #1e2a50;
+    stroke-opacity: 0.6;
+    stroke-width: 1.2;
+    transition: stroke-opacity 0.3s;
+  }
+  .link.highlighted { stroke-opacity: 1; stroke-width: 2; }
+  .link.faded { stroke-opacity: 0.05; }
+
+  /* Paper-derived edge */
+  .link.paper-derived {
+    stroke: #ffb300;
+    stroke-opacity: 0.85;
+    stroke-width: 2.2;
+    stroke-dasharray: 7 4;
+    animation: dash-flow 1.8s linear infinite;
+    filter: drop-shadow(0 0 4px #ffb30088);
+  }
+  .link.paper-derived.faded {
+    stroke-opacity: 0.06;
+    filter: none;
+    animation: none;
+  }
+  .link.paper-derived.highlighted {
+    stroke-opacity: 1;
+    stroke-width: 3;
+    filter: drop-shadow(0 0 8px #ffb300cc);
+  }
+  @keyframes dash-flow {
+    from { stroke-dashoffset: 22; }
+    to   { stroke-dashoffset: 0; }
+  }
+
+  /* Paper-derived legend pill */
+  .paper-legend {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.7rem;
+    color: #ffb300;
+    font-family: 'Space Mono', monospace;
+    padding: 3px 10px;
+    border: 1px solid #ffb30055;
+    border-radius: 20px;
+    background: #ffb30011;
+    margin-left: 10px;
+  }
+  .paper-legend-line {
+    width: 28px;
+    height: 2px;
+    background: repeating-linear-gradient(
+      90deg, #ffb300 0px, #ffb300 7px, transparent 7px, transparent 11px
+    );
+  }
+
+  .node circle {
+    stroke-width: 2;
+    cursor: pointer;
+    transition: r 0.2s;
+  }
+
+  .node text {
+    font-family: 'Outfit', sans-serif;
+    font-size: 11px;
+    fill: var(--text);
+    pointer-events: none;
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .node text.label-outer {
+    font-size: 10px;
+    fill: var(--muted);
+  }
+
+  .node.faded circle { opacity: 0.08; }
+  .node.faded text  { opacity: 0.05; }
+
+  /* Tooltip */
+  #tooltip {
+    position: absolute;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    padding: 14px 16px;
+    border-radius: 6px;
+    max-width: 280px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
+    z-index: 100;
+    font-size: 0.82rem;
+    line-height: 1.6;
+  }
+  #tooltip.visible { opacity: 1; }
+  #tooltip h3 {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.8rem;
+    margin-bottom: 6px;
+    color: var(--accent);
+  }
+  #tooltip .domain-badge {
+    display: inline-block;
+    font-size: 0.65rem;
+    padding: 2px 8px;
+    border-radius: 20px;
+    margin-bottom: 8px;
+    font-weight: 600;
+    opacity: 0.85;
+  }
+  #tooltip p { color: var(--muted); font-size: 0.78rem; }
+  #tooltip .connects {
+    margin-top: 8px;
+    font-size: 0.72rem;
+    color: var(--muted);
+    font-family: 'Space Mono', monospace;
+  }
+  #tooltip .connects span {
+    color: var(--text);
+    opacity: 0.7;
+  }
+
+  /* Controls */
+  .controls {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .btn {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 36px; height: 36px;
+    border-radius: 6px;
+    font-size: 1.1rem;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.2s, color 0.2s;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .hint {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+    line-height: 1.8;
+  }
+
+  /* Star bg */
+  .star { fill: white; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Physics Knowledge Graph</h1>
+    <p>Undergraduate level · 6 domains · Force-directed</p>
+  </div>
+  <div style="display:flex;align-items:center;gap:0">
+    <div class="legend" id="legend"></div>
+    <div class="paper-legend"><span class="paper-legend-line"></span>Paper-derived edge</div>
+  </div>
+</header>
+
+<div id="graph-container">
+  <svg id="svg"></svg>
+  <div id="tooltip"></div>
+  <div class="controls">
+    <button class="btn" id="zoom-in"  title="Zoom in">+</button>
+    <button class="btn" id="zoom-out" title="Zoom out">−</button>
+    <button class="btn" id="reset"    title="Reset">⟳</button>
+  </div>
+  <div class="hint">
+    scroll to zoom · drag to pan · click node to explore
+  </div>
+</div>
+
+<script>
+// ── DATA ──────────────────────────────────────────────────────────────────────
+const DOMAINS = {
+  classical:   { label: "Classical Mechanics", color: "#f9a825" },
+  quantum:     { label: "Quantum Mechanics",   color: "#00ffe5" },
+  em:          { label: "Electromagnetism",    color: "#e040fb" },
+  thermo:      { label: "Thermodynamics",      color: "#ff5722" },
+  relativity:  { label: "Special/Gen. Relativity", color: "#69f0ae" },
+  math:        { label: "Mathematical Tools",  color: "#90caf9" },
+};
+
+const nodes = [
+  // ── CLASSICAL MECHANICS ──
+  { id: "Newton's Laws",        domain: "classical", size: 22, desc: "Three fundamental laws governing motion and force: inertia, F=ma, and action-reaction." },
+  { id: "Kinematics",           domain: "classical", size: 16, desc: "Description of motion (displacement, velocity, acceleration) without reference to cause." },
+  { id: "Work & Energy",        domain: "classical", size: 18, desc: "Work done by forces, kinetic and potential energy, and conservation of energy." },
+  { id: "Momentum",             domain: "classical", size: 16, desc: "Linear momentum p=mv, impulse, and conservation in isolated systems." },
+  { id: "Angular Momentum",     domain: "classical", size: 15, desc: "Rotational analogue of linear momentum; conserved in absence of external torques." },
+  { id: "Lagrangian Mechanics", domain: "classical", size: 17, desc: "Reformulation of classical mechanics using T−V; leads to Euler-Lagrange equations." },
+  { id: "Hamiltonian Mechanics",domain: "classical", size: 17, desc: "Phase-space formulation via the Hamiltonian H = T + V; foundational to quantum mechanics." },
+  { id: "Central Force Motion", domain: "classical", size: 14, desc: "Motion under forces directed toward a fixed center (e.g., planetary orbits)." },
+  { id: "Oscillations & Waves", domain: "classical", size: 16, desc: "Simple harmonic motion, damping, resonance, and wave propagation." },
+  { id: "Fluid Mechanics",      domain: "classical", size: 14, desc: "Statics and dynamics of fluids; Bernoulli's equation, Navier-Stokes equation." },
+
+  // ── QUANTUM MECHANICS ──
+  { id: "Wave-Particle Duality",domain: "quantum",   size: 18, desc: "Matter and radiation exhibit both wave and particle properties; de Broglie's matter wave assigns frequency ν = mc²/h to every particle.",
+    year: 1924, paperSource: "de Broglie, L. Recherches sur la théorie des quanta. PhD thesis, Université de Paris, 1924." },
+  { id: "Schrödinger Equation", domain: "quantum",   size: 22, desc: "Fundamental equation of non-relativistic QM describing how quantum states evolve in time.",
+    year: 1926, paperSource: "Schrödinger, E. Quantisierung als Eigenwertproblem I–IV. Annalen der Physik, 1926." },
+  { id: "Operators & Observables", domain: "quantum", size: 16, desc: "Physical observables represented as Hermitian operators; eigenvalues are measurement outcomes.",
+    year: 1926, paperSource: "Schrödinger, E. Über das Verhältnis der Heisenberg-Born-Jordanschen Quantenmechanik zu der meinen. Annalen der Physik, 1926. [Paper III]" },
+  { id: "Uncertainty Principle",domain: "quantum",   size: 18, desc: "Heisenberg's ΔxΔp ≥ ℏ/2 — fundamental limit on simultaneously knowing conjugate variables.",
+    year: 1927, paperSource: "Heisenberg, W. Über den anschaulichen Inhalt der quantentheoretischen Kinematik und Mechanik. Zeitschrift für Physik, 43, 1927." },
+  { id: "Quantum Harmonic Oscillator", domain: "quantum", size: 15, desc: "Exactly solvable model; ladder operators, zero-point energy, coherent states.",
+    year: 1926, paperSource: "Schrödinger, E. Quantisierung als Eigenwertproblem II. Annalen der Physik, 1926. [Paper II, pp.25–28]" },
+  { id: "Hydrogen Atom",        domain: "quantum",   size: 15, desc: "Exact QM solution yielding energy levels, orbitals, and quantum numbers n, l, mₗ, mₛ.",
+    year: 1926, paperSource: "Schrödinger, E. Quantisierung als Eigenwertproblem I. Annalen der Physik, 1926. [Paper I, pp.5–10]" },
+  { id: "Spin & Angular Momentum QM", domain: "quantum", size: 15, desc: "Intrinsic angular momentum; Pauli matrices, spinors, addition of angular momenta." },
+  { id: "Perturbation Theory",  domain: "quantum",   size: 14, desc: "Systematic approximation for systems close to exactly solvable ones.",
+    year: 1926, paperSource: "Schrödinger, E. Quantisierung als Eigenwertproblem II. Annalen der Physik, 1926. [Paper II, pp.13–40]" },
+  { id: "Quantum Entanglement", domain: "quantum",   size: 16, desc: "Non-local correlations between quantum systems; Bell inequalities, EPR." },
+  { id: "Path Integral Formulation", domain: "quantum", size: 14, desc: "Feynman's reformulation of QM as a sum over all possible paths." },
+
+  // ── ELECTROMAGNETISM ──
+  { id: "Coulomb's Law",        domain: "em", size: 17, desc: "Electrostatic force between point charges: F = kq₁q₂/r²." },
+  { id: "Gauss's Law",          domain: "em", size: 17, desc: "Electric flux through a closed surface equals enclosed charge / ε₀." },
+  { id: "Magnetic Fields",      domain: "em", size: 16, desc: "Fields produced by moving charges; Biot-Savart law, Ampère's law." },
+  { id: "Maxwell's Equations",  domain: "em", size: 22, desc: "Four equations unifying electricity, magnetism, and light: ∇·E, ∇·B, ∇×E, ∇×B." },
+  { id: "Electromagnetic Waves",domain: "em", size: 18, desc: "Self-propagating transverse EM oscillations; speed c = 1/√(μ₀ε₀)." },
+  { id: "Faraday's Law",        domain: "em", size: 16, desc: "Changing magnetic flux induces an EMF; basis of generators and transformers." },
+  { id: "Lorentz Force",        domain: "em", size: 15, desc: "Force on a charged particle: F = q(E + v×B)." },
+  { id: "Circuits & Impedance", domain: "em", size: 14, desc: "AC/DC circuit analysis; Kirchhoff's laws, complex impedance, resonance." },
+  { id: "Multipole Expansion",  domain: "em", size: 13, desc: "Approximation of EM fields far from sources using monopole, dipole, quadrupole terms." },
+
+  // ── THERMODYNAMICS ──
+  { id: "Zeroth Law",           domain: "thermo", size: 14, desc: "Defines thermal equilibrium; transitivity of temperature." },
+  { id: "First Law of Thermo",  domain: "thermo", size: 18, desc: "Conservation of energy: ΔU = Q − W." },
+  { id: "Second Law of Thermo", domain: "thermo", size: 20, desc: "Entropy of an isolated system never decreases; irreversibility and arrow of time." },
+  { id: "Entropy",              domain: "thermo", size: 18, desc: "Measure of disorder; Boltzmann's S = kₙ ln Ω." },
+  { id: "Thermodynamic Potentials", domain: "thermo", size: 15, desc: "Helmholtz (F), Gibbs (G), enthalpy (H) — useful for different constraints." },
+  { id: "Statistical Mechanics",domain: "thermo", size: 20, desc: "Derivation of thermodynamic laws from microscopic statistical behavior of particles." },
+  { id: "Kinetic Theory of Gases", domain: "thermo", size: 15, desc: "Derives macroscopic gas properties from molecular motion statistics; Maxwell-Boltzmann distribution." },
+  { id: "Phase Transitions",    domain: "thermo", size: 15, desc: "Changes between states of matter; order parameters, critical exponents, Ising model." },
+  { id: "Partition Function",   domain: "thermo", size: 16, desc: "Z = Σ exp(−βEᵢ); encodes all thermodynamic information of a system." },
+
+  // ── RELATIVITY ──
+  { id: "Postulates of SR",     domain: "relativity", size: 18, desc: "Laws of physics are the same in all inertial frames; speed of light is constant." },
+  { id: "Lorentz Transformations", domain: "relativity", size: 17, desc: "Coordinate transformations between inertial frames; time dilation, length contraction." },
+  { id: "Spacetime & Minkowski",domain: "relativity", size: 17, desc: "4D spacetime with metric ds² = −c²dt² + dx² + dy² + dz²." },
+  { id: "E = mc²",              domain: "relativity", size: 18, desc: "Mass-energy equivalence; rest energy, relativistic energy-momentum relation." },
+  { id: "General Relativity",   domain: "relativity", size: 20, desc: "Gravity as curvature of spacetime; Einstein field equations Gμν = 8πG Tμν." },
+  { id: "Geodesics & Curvature",domain: "relativity", size: 15, desc: "Free-fall as geodesic motion; Riemann curvature tensor, Ricci tensor." },
+  { id: "Black Holes",          domain: "relativity", size: 16, desc: "Schwarzschild solution, event horizon, singularities, Hawking radiation." },
+  { id: "Gravitational Waves",  domain: "relativity", size: 15, desc: "Ripples in spacetime from accelerating masses; detected by LIGO." },
+
+  // ── MATHEMATICAL TOOLS ──
+  { id: "Calculus",             domain: "math", size: 18, desc: "Differentiation and integration; the language of classical physics." },
+  { id: "Vector Calculus",      domain: "math", size: 18, desc: "Grad, div, curl, Stokes' theorem, divergence theorem." },
+  { id: "Linear Algebra",       domain: "math", size: 17, desc: "Vectors, matrices, eigenvalues; essential for quantum mechanics." },
+  { id: "Differential Equations", domain: "math", size: 17, desc: "ODEs and PDEs ubiquitous in physics: wave equation, heat equation, Schrödinger equation." },
+  { id: "Fourier Analysis",     domain: "math", size: 15, desc: "Decomposing functions into frequency components; fundamental to wave physics and QM." },
+  { id: "Tensor Calculus",      domain: "math", size: 16, desc: "Multilinear maps; essential for general relativity and continuum mechanics." },
+  { id: "Complex Analysis",     domain: "math", size: 14, desc: "Functions of complex variables; contour integration, residues, used in QM and EM." },
+  { id: "Group Theory",         domain: "math", size: 15, desc: "Symmetry in physics; Lie groups, representation theory, particle physics." },
+  { id: "Probability & Statistics", domain: "math", size: 14, desc: "Probability distributions, expectation values, essential for QM and statistical mechanics." },
+];
+
+const links = [
+  // Classical internal
+  { source: "Newton's Laws", target: "Kinematics" },
+  { source: "Newton's Laws", target: "Work & Energy" },
+  { source: "Newton's Laws", target: "Momentum" },
+  { source: "Newton's Laws", target: "Angular Momentum" },
+  { source: "Work & Energy", target: "Lagrangian Mechanics" },
+  { source: "Lagrangian Mechanics", target: "Hamiltonian Mechanics" },
+  { source: "Angular Momentum", target: "Central Force Motion" },
+  { source: "Newton's Laws", target: "Oscillations & Waves" },
+  { source: "Newton's Laws", target: "Fluid Mechanics" },
+
+  // Quantum internal — paper-derived edges handle:
+  // Wave-Particle Duality → E = mc² (de Broglie 1924 Ch.I)
+  // Wave-Particle Duality → Postulates of SR (de Broglie 1924 Ch.I)
+  // Wave-Particle Duality → Hamiltonian Mechanics (de Broglie 1924 Ch.II)
+  // Wave-Particle Duality → Hydrogen Atom (de Broglie 1924 Ch.III)
+  // Wave-Particle Duality → Electromagnetic Waves (de Broglie 1924 Ch.IV)
+  // Schrödinger Equation → Operators & Observables (Schrödinger Paper III)
+  // Schrödinger Equation → Quantum Harmonic Oscillator (Schrödinger Paper II)
+  // Schrödinger Equation → Hydrogen Atom (Schrödinger Paper I)
+  // Schrödinger Equation → Perturbation Theory (Schrödinger Paper II)
+  { source: "Operators & Observables", target: "Uncertainty Principle" },
+  { source: "Operators & Observables", target: "Spin & Angular Momentum QM" },
+  { source: "Hamiltonian Mechanics", target: "Schrödinger Equation" },
+  { source: "Schrödinger Equation", target: "Path Integral Formulation" },
+  { source: "Operators & Observables", target: "Quantum Entanglement" },
+
+  // EM internal
+  { source: "Coulomb's Law", target: "Gauss's Law" },
+  { source: "Gauss's Law", target: "Maxwell's Equations" },
+  { source: "Magnetic Fields", target: "Maxwell's Equations" },
+  { source: "Faraday's Law", target: "Maxwell's Equations" },
+  { source: "Maxwell's Equations", target: "Electromagnetic Waves" },
+  { source: "Lorentz Force", target: "Magnetic Fields" },
+  { source: "Maxwell's Equations", target: "Circuits & Impedance" },
+  { source: "Coulomb's Law", target: "Multipole Expansion" },
+
+  // Thermo internal
+  { source: "Zeroth Law", target: "First Law of Thermo" },
+  { source: "First Law of Thermo", target: "Second Law of Thermo" },
+  { source: "Second Law of Thermo", target: "Entropy" },
+  { source: "Entropy", target: "Statistical Mechanics" },
+  { source: "First Law of Thermo", target: "Thermodynamic Potentials" },
+  { source: "Statistical Mechanics", target: "Kinetic Theory of Gases" },
+  { source: "Statistical Mechanics", target: "Phase Transitions" },
+  { source: "Statistical Mechanics", target: "Partition Function" },
+  { source: "Partition Function", target: "Thermodynamic Potentials" },
+
+  // Relativity internal
+  { source: "Postulates of SR", target: "Lorentz Transformations" },
+  { source: "Lorentz Transformations", target: "Spacetime & Minkowski" },
+  { source: "Spacetime & Minkowski", target: "E = mc²" },
+  { source: "Spacetime & Minkowski", target: "General Relativity" },
+  { source: "General Relativity", target: "Geodesics & Curvature" },
+  { source: "General Relativity", target: "Black Holes" },
+  { source: "General Relativity", target: "Gravitational Waves" },
+
+  // Math internal
+  { source: "Calculus", target: "Vector Calculus" },
+  { source: "Calculus", target: "Differential Equations" },
+  { source: "Linear Algebra", target: "Group Theory" },
+  { source: "Calculus", target: "Fourier Analysis" },
+  { source: "Vector Calculus", target: "Tensor Calculus" },
+  { source: "Complex Analysis", target: "Fourier Analysis" },
+
+  // Cross-domain — note: Hamiltonian→Schrödinger, Fourier→QHO, Linear Algebra→Operators
+  // are now paper-derived; keeping remaining cross-domain links
+  { source: "Calculus",              target: "Newton's Laws" },
+  { source: "Differential Equations",target: "Schrödinger Equation" },
+  { source: "Linear Algebra",        target: "Operators & Observables" },
+  { source: "Vector Calculus",       target: "Maxwell's Equations" },
+  { source: "Fourier Analysis",      target: "Oscillations & Waves" },
+  { source: "Tensor Calculus",       target: "General Relativity" },
+  { source: "Group Theory",          target: "Spin & Angular Momentum QM" },
+  { source: "Probability & Statistics", target: "Statistical Mechanics" },
+  { source: "Probability & Statistics", target: "Quantum Entanglement" },
+  { source: "Hamiltonian Mechanics", target: "Statistical Mechanics" },
+  { source: "Lagrangian Mechanics",  target: "Path Integral Formulation" },
+  { source: "Maxwell's Equations",   target: "Postulates of SR" },
+  { source: "Lorentz Force",         target: "Lorentz Transformations" },
+  { source: "Oscillations & Waves",  target: "Electromagnetic Waves" },
+  { source: "Entropy",               target: "Second Law of Thermo" },
+  { source: "Kinetic Theory of Gases", target: "Partition Function" },
+  { source: "Central Force Motion",  target: "General Relativity" },
+  { source: "Hamiltonian Mechanics", target: "Path Integral Formulation" },
+  { source: "Angular Momentum",      target: "Spin & Angular Momentum QM" },
+  { source: "Complex Analysis",      target: "Schrödinger Equation" },
+
+  // ── PAPER-DERIVED EDGES ──────────────────────────────────────────────────────
+
+  // ── SOURCE 1: Heisenberg 1927 ────────────────────────────────────────────────
+  {
+    source: "Uncertainty Principle",
+    target: "Spacetime & Minkowski",
+    paperDerived: true,
+    relType: "STRUCTURALLY_ANALOGOUS_TO",
+    citation: "Heisenberg, W. (1927). Über den anschaulichen Inhalt der quantentheoretischen Kinematik und Mechanik. Zeitschrift für Physik, 43, 172–198. §2.",
+    passage: "\"It is reasonable to compare the quantum theory with the special theory of relativity... The situation is similar in regard to the definition of the concepts 'electron position and velocity' in quantum theory.\"",
+    note: "Heisenberg argues ΔxΔp ≥ ℏ/2 plays the same foundational role in QM that the speed-of-light limit plays in SR: both are constraints that make the theory self-consistent rather than contradictory."
+  },
+
+  // ── SOURCE 2: de Broglie 1924 ────────────────────────────────────────────────
+
+  // Thesis Ch.I: matter wave derived from E=mc² × E=hν — SR is the explicit origin
+  {
+    source: "Wave-Particle Duality",
+    target: "E = mc²",
+    paperDerived: true,
+    relType: "DERIVED_FROM",
+    citation: "de Broglie, L. (1924). Recherches sur la théorie des quanta. PhD thesis, Université de Paris. Ch. I.",
+    passage: "\"A radiation of frequency ν... has an energy hν and, therefore, a mass hν/c². Conversely, a particle of rest-mass m₀ must be assigned an internal frequency ν₀ = m₀c²/h.\" De Broglie synthesises Einstein's mass-energy relation with Planck's quantum to assign a wave to every particle.",
+    note: "The matter wave is born directly from combining E = m₀c² with E = hν. De Broglie's opening move is this synthesis — wave-particle duality is a consequence of special relativity meeting quantum theory. The year 1924 precedes Schrödinger by two years; this is the founding paper of the concept."
+  },
+
+  // Thesis Ch.I: Postulates of SR are the other half of the synthesis
+  {
+    source: "Wave-Particle Duality",
+    target: "Postulates of SR",
+    paperDerived: true,
+    relType: "REQUIRES",
+    citation: "de Broglie, L. (1924). Recherches sur la théorie des quanta. PhD thesis, Université de Paris. Ch. I.",
+    passage: "\"The phase wave must propagate with a velocity V = c²/v > c... This superluminal phase velocity is not in conflict with relativity because it carries no energy or information — it is the group velocity of the wave packet that equals the particle velocity v.\"",
+    note: "De Broglie resolves the apparent conflict with SR by distinguishing phase velocity (V = c²/v) from group velocity (v). The relativistic framework is not background context — it is load-bearing. The matter wave concept cannot be stated consistently without SR."
+  },
+
+  // Thesis Ch.II: Maupertuis ≡ Fermat — Hamilton's principle and wave propagation are the same theorem
+  {
+    source: "Wave-Particle Duality",
+    target: "Hamiltonian Mechanics",
+    paperDerived: true,
+    relType: "UNIFIED_WITH",
+    citation: "de Broglie, L. (1924). Recherches sur la théorie des quanta. PhD thesis, Université de Paris. Ch. II.",
+    passage: "\"The principle of Fermat applied to the phase wave and the principle of Maupertuis applied to the particle are two aspects of the same physical reality... the trajectory of the particle is the ray of the wave.\"",
+    note: "Chapter II proves that Hamilton's principle of least action (classical mechanics) is mathematically identical to Fermat's principle of least time applied to the phase wave. This is not an analogy — de Broglie proves it as a theorem. The particle trajectory is the wave ray. This is the deepest unification in the thesis and the conceptual root of the later Schrödinger equation."
+  },
+
+  // Thesis Ch.III: Bohr quantisation derived as wave resonance condition
+  {
+    source: "Wave-Particle Duality",
+    target: "Hydrogen Atom",
+    paperDerived: true,
+    relType: "EXPLAINS_QUANTISATION_OF",
+    citation: "de Broglie, L. (1924). Recherches sur la théorie des quanta. PhD thesis, Université de Paris. Ch. III.",
+    passage: "\"The quantisation condition ∮p·dq = nh is the condition that the phase wave closes on itself after one orbit — the orbit contains exactly n wavelengths.\" De Broglie derives Bohr's rule as a standing-wave resonance condition.",
+    note: "Bohr's ad hoc quantisation rule (1913) is given a physical explanation for the first time: an electron orbit is stable when it contains a whole number of de Broglie wavelengths, forming a standing wave. This is the first physical explanation of atomic quantisation, derived here in 1924, two years before Schrödinger's equation."
+  },
+
+  // Thesis Ch.IV: photon momentum p=h/λ — EM waves carry particle-like momentum
+  {
+    source: "Wave-Particle Duality",
+    target: "Electromagnetic Waves",
+    paperDerived: true,
+    relType: "GENERALISES",
+    citation: "de Broglie, L. (1924). Recherches sur la théorie des quanta. PhD thesis, Université de Paris. Ch. IV.",
+    passage: "\"Light quanta have momentum p = hν/c = h/λ... The symmetry of nature demands that if light waves have particle properties, material particles must have wave properties.\"",
+    note: "De Broglie argues by symmetry: Einstein showed light (EM wave) has particle momentum p = h/λ; therefore particles must have wave properties with the same relation. Wave-particle duality for matter is an extension of what was already true for light. The edge runs both ways — EM waves exhibit it, and de Broglie generalises it to all matter."
+  },
+
+  // ── SOURCE 3: Schrödinger 1926 (Collected Papers on Wave Mechanics, 1928) ────
+  // Note: Wave-Particle Duality → Schrödinger Equation edge now attributed to de Broglie above
+  // (Schrödinger Paper I opens by citing de Broglie as the starting point)
+
+  // Paper I: Hamilton-Jacobi → Schrödinger Equation (the actual mathematical derivation)
+  {
+    source: "Hamiltonian Mechanics",
+    target: "Schrödinger Equation",
+    paperDerived: true,
+    relType: "MATHEMATICAL_ORIGIN_OF",
+    citation: "Schrödinger, E. (1926). Quantisierung als Eigenwertproblem I. Annalen der Physik, 79, 361–376. [Collected Papers, p.2–4]",
+    passage: "\"We know that the Hamilton-Jacobi equation... corresponds to the equation of geometrical optics... We seek a wave equation which bears the same relation to the mechanical fundamental equations as the equation of wave optics bears to that of geometrical optics.\"",
+    note: "Schrödinger derives his equation by substituting ψ = exp(iS/ℏ) into the Hamilton-Jacobi equation and demanding that ψ satisfies a linear wave equation. The Schrödinger equation is literally the Hamilton-Jacobi equation rewritten in wave form — the mathematical origin is explicit on pages 2–4 of Paper I."
+  },
+
+  // Paper I: Hydrogen Atom solved as first validation of the equation
+  {
+    source: "Hydrogen Atom",
+    target: "Schrödinger Equation",
+    paperDerived: true,
+    relType: "FIRST_APPLICATION_OF",
+    citation: "Schrödinger, E. (1926). Quantisierung als Eigenwertproblem I. Annalen der Physik, 79, 361–376. [Collected Papers, p.5–10]",
+    passage: "\"As a first example I will take the hydrogen atom... the eigenvalues of this boundary-value problem are found to be E_n = -me⁴/2ℏ²n², in complete agreement with Balmer's formula.\"",
+    note: "Paper I is structured so that the hydrogen atom is the proof-of-concept. Schrödinger solves the eigenvalue problem for the Coulomb potential and recovers the correct spectral series, which he presents as the primary validation of his equation. This is not an application added later — it is the founding example."
+  },
+
+  // Paper II: Perturbation Theory developed directly from the wave equation
+  {
+    source: "Perturbation Theory",
+    target: "Schrödinger Equation",
+    paperDerived: true,
+    relType: "DEVELOPED_FROM",
+    citation: "Schrödinger, E. (1926). Quantisierung als Eigenwertproblem II. Annalen der Physik, 79, 489–527. [Collected Papers, p.13–40]",
+    passage: "\"We add a small perturbation λV' to the potential... and expand both the eigenfunction ψ and eigenvalue E in powers of λ: ψ = ψ₀ + λψ₁ + λ²ψ₂ + ..., E = E₀ + λE₁ + λ²E₂ + ...\"",
+    note: "Schrödinger invents wave-mechanical perturbation theory in Paper II as a direct method for solving the wave equation when exact solutions are unavailable. The modern perturbation theory used throughout quantum mechanics descends directly from this paper."
+  },
+
+  // Paper II: Harmonic Oscillator solved explicitly
+  {
+    source: "Quantum Harmonic Oscillator",
+    target: "Schrödinger Equation",
+    paperDerived: true,
+    relType: "EXACTLY_SOLVED_BY",
+    citation: "Schrödinger, E. (1926). Quantisierung als Eigenwertproblem II. Annalen der Physik, 79, 489–527. [Collected Papers, p.25–28]",
+    passage: "\"For the harmonic oscillator V = ½kx², the eigenvalue equation yields E_n = (n + ½)hν, showing that the lowest state has energy ½hν — the zero-point energy — and cannot be at rest.\"",
+    note: "Schrödinger solves the harmonic oscillator in Paper II and explicitly identifies the zero-point energy ½hν as a direct consequence of the wave equation. This is the founding derivation of the quantum harmonic oscillator energy spectrum."
+  },
+
+  // Paper III: Operator-matrix equivalence — Schrödinger proves wave mechanics = matrix mechanics
+  {
+    source: "Operators & Observables",
+    target: "Schrödinger Equation",
+    paperDerived: true,
+    relType: "PROVEN_EQUIVALENT_TO",
+    citation: "Schrödinger, E. (1926). Über das Verhältnis der Heisenberg-Born-Jordanschen Quantenmechanik zu der meinen. Annalen der Physik, 79, 734–756. [Collected Papers, p.45–61]",
+    passage: "\"I will show that the matrix elements of Heisenberg's quantum mechanics are identical with the coefficients that appear in the expansion of my eigenfunctions... the two theories are mathematically equivalent.\"",
+    note: "Paper III is entirely devoted to proving the equivalence of Schrödinger's wave mechanics and Heisenberg's matrix mechanics. Schrödinger constructs the operator correspondence explicitly: the Heisenberg matrices are the integral operators acting on his ψ-functions. This paper establishes that operators and observables are not a separate postulate but a consequence of the wave equation structure."
+  },
+
+  // Paper III: Fourier Analysis — eigenfunction expansion named as generalised Fourier decomposition
+  {
+    source: "Fourier Analysis",
+    target: "Schrödinger Equation",
+    paperDerived: true,
+    relType: "MATHEMATICAL_STRUCTURE_OF",
+    citation: "Schrödinger, E. (1926). Über das Verhältnis... [Collected Papers, p.48–52]",
+    passage: "\"The expansion of an arbitrary function in terms of the eigenfunctions ψ_n is entirely analogous to a Fourier expansion... the eigenfunctions play the role of the harmonic functions sin and cos.\"",
+    note: "Schrödinger explicitly identifies the eigenfunction expansion as a generalised Fourier decomposition in Hilbert space. This is the direct textual basis for the deep connection between Fourier analysis and the mathematical structure of the Schrödinger equation — it is Schrödinger's own framing, not a later pedagogical analogy."
+  },
+];
+
+// ── LEGEND ────────────────────────────────────────────────────────────────────
+const legendEl = document.getElementById("legend");
+const activeFilters = new Set(Object.keys(DOMAINS));
+
+Object.entries(DOMAINS).forEach(([key, val]) => {
+  const item = document.createElement("div");
+  item.className = "legend-item active";
+  item.style.color = val.color;
+  item.innerHTML = `<span class="legend-dot" style="background:${val.color}"></span>${val.label}`;
+  item.addEventListener("click", () => {
+    if (activeFilters.has(key)) {
+      activeFilters.delete(key);
+      item.classList.remove("active");
+    } else {
+      activeFilters.add(key);
+      item.classList.add("active");
+    }
+    applyFilter();
+  });
+  legendEl.appendChild(item);
+});
+
+// ── D3 SETUP ──────────────────────────────────────────────────────────────────
+const svg = d3.select("#svg");
+const container = document.getElementById("graph-container");
+
+let width  = container.clientWidth;
+let height = container.clientHeight;
+
+// Star background
+const bgGroup = svg.append("g").attr("class", "bg-stars");
+for (let i = 0; i < 180; i++) {
+  bgGroup.append("circle")
+    .attr("class", "star")
+    .attr("cx", Math.random() * width)
+    .attr("cy", Math.random() * height)
+    .attr("r", Math.random() * 1.2)
+    .attr("opacity", Math.random() * 0.5 + 0.1);
+}
+
+const g = svg.append("g");
+
+// Zoom
+const zoom = d3.zoom()
+  .scaleExtent([0.2, 4])
+  .on("zoom", e => g.attr("transform", e.transform));
+svg.call(zoom);
+
+document.getElementById("zoom-in").onclick  = () => svg.transition().call(zoom.scaleBy, 1.4);
+document.getElementById("zoom-out").onclick = () => svg.transition().call(zoom.scaleBy, 0.7);
+document.getElementById("reset").onclick    = () => svg.transition().call(zoom.transform, d3.zoomIdentity);
+
+// Simulation — feed ALL links for physics
+const simulation = d3.forceSimulation(nodes)
+  .force("link",   d3.forceLink(links).id(d => d.id).distance(d => 100).strength(0.4))
+  .force("charge", d3.forceManyBody().strength(-320))
+  .force("center", d3.forceCenter(width / 2, height / 2))
+  .force("collision", d3.forceCollide().radius(d => d.size * 1.7 + 10));
+
+// Links — split into normal and paper-derived
+const normalLinks = links.filter(l => !l.paperDerived);
+const paperLinks  = links.filter(l =>  l.paperDerived);
+
+const linkSel = g.append("g").attr("class","links-normal")
+  .selectAll("line").data(normalLinks).join("line").attr("class", "link");
+
+const paperLinkSel = g.append("g").attr("class","links-paper")
+  .selectAll("line").data(paperLinks).join("line")
+  .attr("class", "link paper-derived");
+
+// Nodes
+const nodeSel = g.append("g").selectAll("g")
+  .data(nodes).join("g")
+  .attr("class", "node")
+  .call(d3.drag()
+    .on("start", (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+    .on("drag",  (e, d) => { d.fx = e.x; d.fy = e.y; })
+    .on("end",   (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
+  );
+
+nodeSel.append("circle")
+  .attr("r", d => d.size * 1.7)
+  .attr("fill", d => DOMAINS[d.domain].color + "22")
+  .attr("stroke", d => DOMAINS[d.domain].color)
+  .attr("stroke-width", d => d.size > 18 ? 2.5 : 1.8);
+
+// Label inside nodes — wrap to fit within circle radius
+nodeSel.each(function(d) {
+  const el = d3.select(this);
+  const r = d.size * 1.7;
+  const words = d.id.split(" ");
+
+  // Build wrapped lines: max chars per line scales with radius
+  const maxChars = Math.floor(r / 4.2);
+  const lines = [];
+  let cur = [];
+  words.forEach(w => {
+    const candidate = [...cur, w].join(" ");
+    if (candidate.length > maxChars && cur.length > 0) {
+      lines.push(cur.join(" "));
+      cur = [w];
+    } else {
+      cur.push(w);
+    }
+  });
+  if (cur.length) lines.push(cur.join(" "));
+
+  const fontSize = r > 32 ? 11 : r > 24 ? 10 : 9;
+  const lineH = fontSize + 3;
+  const totalH = lines.length * lineH;
+
+  lines.forEach((line, i) => {
+    el.append("text")
+      .text(line)
+      .attr("dy", -totalH / 2 + i * lineH + lineH * 0.7)
+      .attr("text-anchor", "middle")
+      .style("font-size", fontSize + "px")
+      .style("font-weight", "600")
+      .style("fill", DOMAINS[d.domain].color)
+      .style("pointer-events", "none");
+  });
+
+  // Year badge — only for sourced nodes
+  if (d.year) {
+    const badgeR = 10;
+    const bx = r * 0.62;
+    const by = -r * 0.62;
+    el.append("circle")
+      .attr("cx", bx).attr("cy", by)
+      .attr("r", badgeR)
+      .attr("fill", "#0a0a1a")
+      .attr("stroke", DOMAINS[d.domain].color)
+      .attr("stroke-width", 1.2)
+      .style("pointer-events", "none");
+    el.append("text")
+      .text(d.year)
+      .attr("x", bx).attr("y", by)
+      .attr("dy", "0.35em")
+      .attr("text-anchor", "middle")
+      .style("font-size", "7px")
+      .style("font-weight", "700")
+      .style("fill", DOMAINS[d.domain].color)
+      .style("pointer-events", "none");
+  }
+});
+
+// Tick
+simulation.on("tick", () => {
+  const moveLine = sel => sel
+    .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+    .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+  moveLine(linkSel);
+  moveLine(paperLinkSel);
+  nodeSel.attr("transform", d => `translate(${d.x},${d.y})`);
+});
+
+// ── TOOLTIP & HOVER ───────────────────────────────────────────────────────────
+const tooltip = document.getElementById("tooltip");
+let hoveredId = null;
+
+function getNeighbors(nodeId) {
+  const neighbors = new Set();
+  links.forEach(l => {
+    const s = typeof l.source === "object" ? l.source.id : l.source;
+    const t = typeof l.target === "object" ? l.target.id : l.target;
+    if (s === nodeId) neighbors.add(t);
+    if (t === nodeId) neighbors.add(s);
+  });
+  return neighbors;
+}
+
+function getPaperLinks(nodeId) {
+  return paperLinks.filter(l => {
+    const s = typeof l.source === "object" ? l.source.id : l.source;
+    const t = typeof l.target === "object" ? l.target.id : l.target;
+    return s === nodeId || t === nodeId;
+  });
+}
+
+// Paper-link tooltip (separate, amber-styled)
+const paperTooltip = document.createElement("div");
+paperTooltip.id = "paper-tooltip";
+paperTooltip.style.cssText = `
+  position:absolute; background:#0d0f1a; border:1px solid #ffb30066;
+  border-left:3px solid #ffb300; padding:14px 16px; border-radius:6px;
+  max-width:320px; pointer-events:none; opacity:0; transition:opacity 0.2s;
+  z-index:200; font-size:0.78rem; line-height:1.6; color:#c8d4f0;
+`;
+document.getElementById("graph-container").appendChild(paperTooltip);
+
+nodeSel
+  .on("mouseover", function(event, d) {
+    hoveredId = d.id;
+    const neighbors = getNeighbors(d.id);
+    const myPaperLinks = getPaperLinks(d.id);
+
+    nodeSel.classed("faded", n => n.id !== d.id && !neighbors.has(n.id));
+
+    linkSel
+      .classed("highlighted", l => { const s = typeof l.source==="object"?l.source.id:l.source; const t = typeof l.target==="object"?l.target.id:l.target; return s===d.id||t===d.id; })
+      .classed("faded",       l => { const s = typeof l.source==="object"?l.source.id:l.source; const t = typeof l.target==="object"?l.target.id:l.target; return s!==d.id&&t!==d.id; });
+
+    paperLinkSel
+      .classed("highlighted", l => { const s = typeof l.source==="object"?l.source.id:l.source; const t = typeof l.target==="object"?l.target.id:l.target; return s===d.id||t===d.id; })
+      .classed("faded",       l => { const s = typeof l.source==="object"?l.source.id:l.source; const t = typeof l.target==="object"?l.target.id:l.target; return s!==d.id&&t!==d.id; });
+
+    const dom = DOMAINS[d.domain];
+
+    // If this node has a paper-derived edge, show citation panel too
+    if (myPaperLinks.length > 0) {
+      const pl = myPaperLinks[0];
+      const otherEnd = (typeof pl.source==="object"?pl.source.id:pl.source) === d.id
+        ? (typeof pl.target==="object"?pl.target.id:pl.target)
+        : (typeof pl.source==="object"?pl.source.id:pl.source);
+      paperTooltip.innerHTML = `
+        <div style="font-family:'Space Mono',monospace;font-size:0.7rem;color:#ffb300;margin-bottom:6px;letter-spacing:0.08em">
+          ◈ PAPER-DERIVED EDGE
+        </div>
+        <div style="font-size:0.8rem;font-weight:600;margin-bottom:4px">
+          ${d.id} ↔ ${otherEnd}
+        </div>
+        <div style="font-size:0.7rem;color:#ffb300;opacity:0.8;margin-bottom:8px;font-style:italic">
+          ${pl.relType}
+        </div>
+        <div style="font-size:0.72rem;color:#8892b0;margin-bottom:8px;border-left:2px solid #ffb30044;padding-left:8px;font-style:italic">
+          ${pl.passage}
+        </div>
+        <div style="font-size:0.68rem;color:#556080;margin-bottom:6px">
+          ${pl.note}
+        </div>
+        <div style="font-size:0.65rem;color:#ffb30099;font-family:'Space Mono',monospace;border-top:1px solid #ffb30022;padding-top:6px">
+          📄 ${pl.citation}
+        </div>
+      `;
+      paperTooltip.style.opacity = "1";
+    } else {
+      paperTooltip.style.opacity = "0";
+    }
+
+    tooltip.innerHTML = `
+      <h3>${d.id}</h3>
+      <span class="domain-badge" style="background:${dom.color}22;color:${dom.color};border:1px solid ${dom.color}55">${dom.label}</span>
+      <p>${d.desc}</p>
+      ${d.year ? `<div style="font-size:0.68rem;color:${dom.color};opacity:0.85;margin-bottom:6px;font-family:'Space Mono',monospace;border-left:2px solid ${dom.color}66;padding-left:8px">
+        📄 First established: <strong>${d.year}</strong><br><span style="opacity:0.7">${d.paperSource}</span>
+      </div>` : ''}
+      <div class="connects">connects to: <span>${[...neighbors].join(", ") || "—"}</span></div>
+    `;
+    tooltip.style.borderLeftColor = dom.color;
+    tooltip.classList.add("visible");
+  })
+  .on("mousemove", function(event) {
+    const rect = container.getBoundingClientRect();
+    let x = event.clientX - rect.left + 16;
+    let y = event.clientY - rect.top  - 10;
+    if (x + 290 > rect.width)  x = event.clientX - rect.left - 300;
+    if (y + 200 > rect.height) y = event.clientY - rect.top  - 150;
+    tooltip.style.left = x + "px";
+    tooltip.style.top  = y + "px";
+    // Paper tooltip appears offset below
+    paperTooltip.style.left = x + "px";
+    paperTooltip.style.top  = (y + 210) + "px";
+    if (y + 210 + 240 > rect.height) {
+      paperTooltip.style.top = (y - 260) + "px";
+    }
+  })
+  .on("mouseout", function() {
+    hoveredId = null;
+    nodeSel.classed("faded", false);
+    linkSel.classed("highlighted", false).classed("faded", false);
+    paperLinkSel.classed("highlighted", false).classed("faded", false);
+    tooltip.classList.remove("visible");
+    paperTooltip.style.opacity = "0";
+  });
+
+// ── FILTER ────────────────────────────────────────────────────────────────────
+function applyFilter() {
+  nodeSel.style("display", d => activeFilters.has(d.domain) ? null : "none");
+  const showLink = l => {
+    const s = typeof l.source === "object" ? l.source : nodes.find(n => n.id === l.source);
+    const t = typeof l.target === "object" ? l.target : nodes.find(n => n.id === l.target);
+    return (s && t && activeFilters.has(s.domain) && activeFilters.has(t.domain)) ? null : "none";
+  };
+  linkSel.style("display", showLink);
+  paperLinkSel.style("display", showLink);
+  simulation.alpha(0.3).restart();
+}
+
+// ── RESIZE ────────────────────────────────────────────────────────────────────
+window.addEventListener("resize", () => {
+  width  = container.clientWidth;
+  height = container.clientHeight;
+  simulation.force("center", d3.forceCenter(width / 2, height / 2)).alpha(0.2).restart();
+});
+</script>
+</body>
+</html>
